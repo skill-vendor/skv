@@ -9,6 +9,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version is set at build time via -ldflags "-X main.version=vX.Y.Z"
+var version = "dev"
+
 var errUsage = errors.New("usage")
 
 type usageError struct {
@@ -62,8 +65,20 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newUpdateCmd())
 	cmd.AddCommand(newVerifyCmd())
 	cmd.AddCommand(newImportCmd())
+	cmd.AddCommand(newVersionCmd())
 
 	return cmd
+}
+
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the version",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Println(version)
+			return nil
+		},
+	}
 }
 
 func newInitCmd() *cobra.Command {
