@@ -1,0 +1,32 @@
+# Status command shows skill state.
+
+mkdir workspace
+cd workspace
+exec skv init
+
+exec git -C skillrepo -c init.defaultBranch=main init
+exec git -C skillrepo add .
+exec git -C skillrepo commit -m add-skill
+
+exec skv add file://$WORK/workspace/skillrepo:skill-foo --quiet
+
+# Expected: status shows ok for synced skill
+exec skv status
+stdout 'skill-foo'
+stdout 'ok'
+
+# Modify vendored content to simulate drift
+cp modified.txt .skv/skills/skill-foo/modified.txt
+
+# Expected: status shows modified
+exec skv status
+stdout 'skill-foo'
+stdout 'modified'
+
+-- workspace/skillrepo/skill-foo/SKILL.md --
+---
+name: skill-foo
+description: demo skill
+---
+-- workspace/modified.txt --
+local modification

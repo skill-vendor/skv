@@ -26,6 +26,10 @@ type License struct {
 }
 
 func Write(path string, lock *Lock) error {
+	// Ensure Skills is never nil for consistent JSON output
+	if lock.Skills == nil {
+		lock.Skills = []Skill{}
+	}
 	data, err := json.MarshalIndent(lock, "", "  ")
 	if err != nil {
 		return err

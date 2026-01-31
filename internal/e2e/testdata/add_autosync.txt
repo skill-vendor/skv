@@ -1,0 +1,29 @@
+# Add command auto-syncs by default.
+
+mkdir workspace
+cd workspace
+exec skv init
+
+exec git -C skillrepo -c init.defaultBranch=main init
+exec git -C skillrepo add .
+exec git -C skillrepo commit -m add-skill
+
+# Expected: add fetches immediately without needing sync
+exec skv add file://$WORK/workspace/skillrepo:skill-foo --quiet
+
+# Assert vendored content exists immediately
+exists .skv/skills/skill-foo/SKILL.md
+
+# Assert symlinks created
+exec readlink .claude/skills/skill-foo
+stdout '^\.\./\.\./\.skv/skills/skill-foo$'
+
+# Assert lock file is populated
+exec skv list --names
+stdout '^skill-foo$'
+
+-- workspace/skillrepo/skill-foo/SKILL.md --
+---
+name: skill-foo
+description: demo skill
+---

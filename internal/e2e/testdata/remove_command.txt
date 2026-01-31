@@ -1,0 +1,44 @@
+# Remove command deletes skill completely.
+
+mkdir workspace
+cd workspace
+exec skv init
+
+exec git -C skillrepo -c init.defaultBranch=main init
+exec git -C skillrepo add .
+exec git -C skillrepo commit -m add-skill
+
+exec skv add file://$WORK/workspace/skillrepo:skill-foo --quiet
+
+# Verify skill is installed
+exists .skv/skills/skill-foo/SKILL.md
+exec readlink .claude/skills/skill-foo
+stdout 'skill-foo'
+
+# Expected: remove deletes everything
+exec skv remove skill-foo --quiet
+
+# Verify vendored content is gone
+! exists .skv/skills/skill-foo
+
+# Verify symlinks are gone
+! exists .claude/skills/skill-foo
+! exists .codex/skills/skill-foo
+! exists .opencode/skill/skill-foo
+
+# Verify lock is updated (empty)
+cmp skv.lock expected.lock.tmpl
+
+# Expected: remove fails for non-existent skill
+! exec skv remove nonexistent
+stderr 'not found'
+
+-- workspace/skillrepo/skill-foo/SKILL.md --
+---
+name: skill-foo
+description: demo skill
+---
+-- workspace/expected.lock.tmpl --
+{
+  "skills": []
+}

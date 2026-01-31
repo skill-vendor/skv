@@ -8,10 +8,10 @@ exec git -C skillrepo -c init.defaultBranch=main init
 exec git -C skillrepo add .
 exec git -C skillrepo commit -m add-skill
 
-exec skv add file://$WORK/workspace/skillrepo:skill-foo
+exec skv add --no-sync file://$WORK/workspace/skillrepo:skill-foo
 
 # Expected: offline mode errors because the skill has not been vendored yet.
-! exec skv sync --offline
+! exec skv sync --offline --quiet
 
 # Lock should remain at the initialized empty state.
 cmp skv.lock expected.lock.tmpl

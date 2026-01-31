@@ -1,0 +1,30 @@
+# List command shows installed skills.
+
+mkdir workspace
+cd workspace
+exec skv init
+
+exec git -C skillrepo -c init.defaultBranch=main init
+exec git -C skillrepo add .
+exec git -C skillrepo commit -m add-skill
+
+exec skv add file://$WORK/workspace/skillrepo:skill-foo --quiet
+
+# Expected: list shows the skill
+exec skv list
+stdout 'skill-foo'
+stdout 'skillrepo'
+
+# Expected: list --names outputs just the name
+exec skv list --names
+stdout '^skill-foo$'
+
+# Expected: list --json outputs JSON
+exec skv list --json
+stdout '"name": "skill-foo"'
+
+-- workspace/skillrepo/skill-foo/SKILL.md --
+---
+name: skill-foo
+description: demo skill
+---

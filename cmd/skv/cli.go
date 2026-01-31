@@ -36,6 +36,8 @@ func Execute() error {
 }
 
 func newRootCmd() *cobra.Command {
+	var quiet bool
+
 	cmd := &cobra.Command{
 		Use:   "skv",
 		Short: "Skill Vendor",
@@ -45,7 +47,12 @@ func newRootCmd() *cobra.Command {
   skv add https://github.com/acme/skill-foo
   skv sync
   skv verify
+  skv list
+  skv status
 `),
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			globalOutput.SetQuiet(quiet)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
@@ -59,6 +66,8 @@ func newRootCmd() *cobra.Command {
 	cmd.SetErr(os.Stderr)
 	cmd.CompletionOptions.DisableDefaultCmd = true
 
+	cmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "suppress non-error output")
+
 	cmd.AddCommand(newInitCmd())
 	cmd.AddCommand(newAddCmd())
 	cmd.AddCommand(newSyncCmd())
@@ -66,6 +75,9 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newVerifyCmd())
 	cmd.AddCommand(newImportCmd())
 	cmd.AddCommand(newVersionCmd())
+	cmd.AddCommand(newListCmd())
+	cmd.AddCommand(newRemoveCmd())
+	cmd.AddCommand(newStatusCmd())
 
 	return cmd
 }
@@ -99,24 +111,28 @@ func newInitCmd() *cobra.Command {
 
 func newAddCmd() *cobra.Command {
 	var name string
+	var noSync bool
 	cmd := &cobra.Command{
 		Use:   "add <repo>[#ref][:path]",
-		Short: "Add a skill source to skv.cue",
-		Long:  "Add a skill source to skv.cue. If :path is omitted, the repo root must contain SKILL.md.",
+		Short: "Add a skill and fetch it immediately",
+		Long: "Add a skill source to skv.cue and fetch it immediately. " +
+			"Use --no-sync to only modify skv.cue without fetching.",
 		Example: strings.TrimSpace(`
   skv add https://github.com/acme/skill-foo
   skv add https://github.com/acme/skill-pack:skills/skill-foo
   skv add https://github.com/acme/skill-pack#v1.2.3:skills/skill-foo
   skv add https://github.com/acme/skill-pack:skills/skill-foo --name release-notes
+  skv add https://github.com/acme/skill-foo --no-sync
 `),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErrorf("add requires <repo>[#ref][:path]")
 			}
-			return runAdd(args[0], addOptions{name: name})
+			return runAdd(args[0], addOptions{name: name, noSync: noSync})
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "override skill name")
+	cmd.Flags().BoolVar(&noSync, "no-sync", false, "only add to skv.cue, don't fetch")
 	return cmd
 }
 
@@ -214,6 +230,67 @@ func newImportCmd() *cobra.Command {
 				return usageErrorf("import requires <agentDir>/<skill>")
 			}
 			return runImport(args[0])
+		},
+	}
+	return cmd
+}
+
+func newListCmd() *cobra.Command {
+	var jsonOutput bool
+	var namesOnly bool
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List installed skills",
+		Long:  "Show all skills installed in skv.lock with their source, ref, and commit.",
+		Example: strings.TrimSpace(`
+  skv list
+  skv list --json
+  skv list --names
+`),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 0 {
+				return usageErrorf("list does not accept arguments")
+			}
+			return runList(listOptions{json: jsonOutput, names: namesOnly})
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	cmd.Flags().BoolVar(&namesOnly, "names", false, "output skill names only, one per line")
+	return cmd
+}
+
+func newRemoveCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "remove <name>",
+		Short: "Remove a skill completely",
+		Long: "Remove a skill from skv.cue, delete its vendored content from .skv/skills, " +
+			"remove symlinks from tool directories, and rewrite skv.lock.",
+		Example: strings.TrimSpace(`
+  skv remove skill-foo
+`),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 1 {
+				return usageErrorf("remove requires a skill name")
+			}
+			return runRemove(args[0])
+		},
+	}
+	return cmd
+}
+
+func newStatusCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show status of installed skills",
+		Long:  "Show the state and drift for each skill (ok, modified, missing).",
+		Example: strings.TrimSpace(`
+  skv status
+`),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 0 {
+				return usageErrorf("status does not accept arguments")
+			}
+			return runStatus()
 		},
 	}
 	return cmd
