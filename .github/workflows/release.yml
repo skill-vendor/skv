@@ -60,12 +60,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
+          set -e
           VERSION="${{ inputs.version }}"
           VERSION_NUM="${VERSION#v}"
 
           # Download binaries and compute SHA256
           for platform in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
-            curl -sL -o "skv-${platform}" \
+            curl -fsSL -o "skv-${platform}" \
               "https://github.com/skill-vendor/skv/releases/download/${VERSION}/skv-${VERSION}-${platform}"
           done
 
