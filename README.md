@@ -6,6 +6,12 @@ SKV vendors skills into your repo, pins them with a lock file, and exposes them 
 
 ## Installation
 
+**Using Homebrew (macOS and Linux):**
+
+```bash
+brew install skill-vendor/tap/skv
+```
+
 **Using Go:**
 
 ```bash
