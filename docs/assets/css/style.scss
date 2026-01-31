@@ -1,0 +1,40 @@
+---
+---
+
+@import "{{ site.theme }}";
+
+.wrapper {
+  max-width: 900px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+
+th, td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid #ddd;
+}
+
+th {
+  background-color: #f5f5f5;
+  font-weight: 600;
+}
+
+pre {
+  padding: 12px;
+  overflow-x: auto;
+}
+
+code {
+  font-size: 0.9em;
+}
+
+hr {
+  margin: 2em 0;
+  border: none;
+  border-top: 1px solid #eee;
+}

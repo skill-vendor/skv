@@ -111,8 +111,32 @@ skv update skill-foo --ref v1.3.0
 # Verify vendored content against the lock.
 skv verify
 
+# List all installed skills.
+skv list
+
+# Remove a skill.
+skv remove skill-foo
+
 # Offline mode: no network access (errors if a fetch is required).
 skv sync --offline
+```
+
+## Managing Skills
+
+**List installed skills:**
+
+```bash
+$ skv list
+skill-foo      https://github.com/acme/skill-foo (abc1234)
+release-notes  https://github.com/acme/skill-pack:skills/release-notes#v1.2.3 (def5678)
+local-helper   local:.skv/skills/local-helper
+```
+
+**Remove a skill:**
+
+```bash
+$ skv remove skill-foo
+Removed skill-foo from spec, lock, and .skv/skills/
 ```
 
 ## Spec (CUE)
