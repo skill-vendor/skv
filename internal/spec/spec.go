@@ -1,6 +1,7 @@
 package spec
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"strings"
@@ -8,6 +9,9 @@ import (
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
 )
+
+//go:embed skv.schema.cue
+var schemaData string
 
 // Spec mirrors the supported subset of skv.cue.
 type Spec struct {
@@ -34,12 +38,22 @@ func Load(path string) (*Spec, error) {
 	}
 
 	ctx := cuecontext.New()
-	v := ctx.CompileBytes(data)
+	v := ctx.CompileBytes(data, cue.Filename(path))
 	if err := v.Err(); err != nil {
 		return nil, err
 	}
 
-	skvVal := v.LookupPath(cue.ParsePath("skv"))
+	schema := ctx.CompileBytes([]byte(schemaData), cue.Filename("skv.schema.cue"))
+	if err := schema.Err(); err != nil {
+		return nil, err
+	}
+
+	combined := schema.Unify(v)
+	if err := combined.Validate(); err != nil {
+		return nil, err
+	}
+
+	skvVal := combined.LookupPath(cue.ParsePath("skv"))
 	if !skvVal.Exists() {
 		return nil, fmt.Errorf("skv.cue: missing skv field")
 	}

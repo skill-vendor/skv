@@ -94,6 +94,8 @@ skv sync --offline
 
 ## Spec (CUE)
 
+See `docs/skv.schema.cue` for the schema and `docs/examples/skv.cue` for a complete example.
+
 ```cue
 // Skill dependencies for skv
 // Vendors agent skills into your repo
