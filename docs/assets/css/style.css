@@ -393,6 +393,10 @@ small {
     grid-template-columns: 1fr;
   }
 
+  .hero::after {
+    display: none;
+  }
+
   .grid.two-col {
     grid-template-columns: 1fr;
   }
