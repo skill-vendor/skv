@@ -1,27 +1,38 @@
 # Local skill entries should be accepted and linked.
 
-exec mkdir workspace
-exec sh -c 'cd workspace && skv init'
-
-exec mkdir -p workspace/local-skill
-exec sh -c 'printf "%s\n" "---" "name: local-skill" "description: local" "---" > workspace/local-skill/SKILL.md'
-
-exec sh -c 'cd workspace && printf "skv: {\n  skills: [\n    {\n      name: \\\"local-skill\\\"\n      local: \\\"./local-skill\\\"\n    },\n  ]\n}\n" > skv.cue'
+mkdir workspace
+cd workspace
+exec skv init
+cp skv.cue.tmpl skv.cue
 
 # Expected: sync vendors and links local skills without fetching.
-exec sh -c 'cd workspace && skv sync'
+exec skv sync
 
-exists workspace/.skv/skills/local-skill/SKILL.md
-exec sh -c 'test "$(readlink workspace/.codex/skills/local-skill)" = "../../.skv/skills/local-skill"'
-exec sh -c 'test "$(readlink workspace/.claude/skills/local-skill)" = "../../.skv/skills/local-skill"'
-exec sh -c 'test "$(readlink workspace/.opencode/skill/local-skill)" = "../../.skv/skills/local-skill"'
+exists .skv/skills/local-skill/SKILL.md
+exec readlink .codex/skills/local-skill
+stdout '^\.\./\.\./\.skv/skills/local-skill$'
+exec readlink .claude/skills/local-skill
+stdout '^\.\./\.\./\.skv/skills/local-skill$'
+exec readlink .opencode/skill/local-skill
+stdout '^\.\./\.\./\.skv/skills/local-skill$'
 
-# Expected lock file.
-exec sh -c 'set -e; hashdir() { dir="$1"; ( cd "$dir" && find . -type f | sed "s|^./||" | LC_ALL=C sort | while IFS= read -r f; do [ -z "$f" ] && continue; h=$(shasum -a 256 "$f" | awk "{print \$1}"); if stat -c "%a" "$f" >/dev/null 2>&1; then mode=$(stat -c "%a" "$f"); else mode=$(stat -f "%Lp" "$f"); fi; printf "%s  %s  %s\n" "$h" "$mode" "$f"; done | shasum -a 256 | awk "{print \$1}" ); }; checksum=$(hashdir workspace/.skv/skills/local-skill); sed -e "s|__LOCAL__|./local-skill|g" -e "s|__CHECKSUM__|$checksum|g" expected.lock.tmpl > workspace/expected.lock'
+lockcmp skv.lock expected.lock.tmpl local=./local-skill checksum=.skv/skills/local-skill
 
-cmp workspace/skv.lock workspace/expected.lock
-
--- expected.lock.tmpl --
+-- workspace/local-skill/SKILL.md --
+---
+name: local-skill
+description: local
+---
+-- workspace/skv.cue.tmpl --
+skv: {
+  skills: [
+    {
+      name: "local-skill"
+      local: "./local-skill"
+    },
+  ]
+}
+-- workspace/expected.lock.tmpl --
 {
   "skills": [
     {

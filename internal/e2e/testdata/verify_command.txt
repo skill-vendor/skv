@@ -1,33 +1,27 @@
 # Verify command should succeed after sync.
 
-env GIT_AUTHOR_NAME=TestUser
-env GIT_AUTHOR_EMAIL=test@example.com
-env GIT_COMMITTER_NAME=TestUser
-env GIT_COMMITTER_EMAIL=test@example.com
-env GIT_AUTHOR_DATE=2000-01-01T00:00:00Z
-env GIT_COMMITTER_DATE=2000-01-01T00:00:00Z
+mkdir workspace
+cd workspace
+exec skv init
 
-exec mkdir workspace
-exec sh -c 'cd workspace && skv init'
+exec git -C skillrepo -c init.defaultBranch=main init
+exec git -C skillrepo add .
+exec git -C skillrepo commit -m add-skill
 
-exec mkdir -p workspace/skillrepo/skill-foo
-exec git -C workspace/skillrepo -c init.defaultBranch=main init
-exec sh -c 'printf "%s\n" "---" "name: skill-foo" "description: demo skill" "---" > workspace/skillrepo/skill-foo/SKILL.md'
-exec git -C workspace/skillrepo add .
-exec git -C workspace/skillrepo commit -m add-skill
-
-exec sh -c 'cd workspace && skv add file://$PWD/skillrepo:skill-foo'
-exec sh -c 'cd workspace && skv sync'
+exec skv add file://$WORK/workspace/skillrepo:skill-foo
+exec skv sync
 
 # Expected: verify succeeds and performs integrity checks.
-exec sh -c 'cd workspace && skv verify'
+exec skv verify
 
-# Expected lock file.
-exec sh -c 'set -e; hashdir() { dir="$1"; ( cd "$dir" && find . -type f | sed "s|^./||" | LC_ALL=C sort | while IFS= read -r f; do [ -z "$f" ] && continue; h=$(shasum -a 256 "$f" | awk "{print \$1}"); if stat -c "%a" "$f" >/dev/null 2>&1; then mode=$(stat -c "%a" "$f"); else mode=$(stat -f "%Lp" "$f"); fi; printf "%s  %s  %s\n" "$h" "$mode" "$f"; done | shasum -a 256 | awk "{print \$1}" ); }; repo_url="file://$PWD/workspace/skillrepo"; commit=$(git -C workspace/skillrepo rev-parse HEAD); checksum=$(hashdir workspace/.skv/skills/skill-foo); sed -e "s|__REPO__|$repo_url|g" -e "s|__COMMIT__|$commit|g" -e "s|__CHECKSUM__|$checksum|g" expected.lock.tmpl > workspace/expected.lock'
+lockcmp skv.lock expected.lock.tmpl repo=skillrepo checksum=.skv/skills/skill-foo
 
-cmp workspace/skv.lock workspace/expected.lock
-
--- expected.lock.tmpl --
+-- workspace/skillrepo/skill-foo/SKILL.md --
+---
+name: skill-foo
+description: demo skill
+---
+-- workspace/expected.lock.tmpl --
 {
   "skills": [
     {

@@ -4,8 +4,7 @@
 
 - Run the full test suite:
   - `go test ./...`
-- If you are working on CLI behavior, run only the E2E tests:
-  - `go test ./internal/e2e -run TestE2E`
+- Make sure the tests pass before committing.
 
 ## E2E expectations
 
