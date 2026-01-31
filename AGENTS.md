@@ -11,6 +11,7 @@ go build -o skv ./cmd/skv
 - Run the full test suite:
   - `go test ./...`
 - Make sure the tests pass before committing.
+- Validate docs changes: `docker run --rm -p 4000:4000 -v "$PWD":/usr/src/app starefossen/github-pages jekyll serve -s docs --livereload --host 0.0.0.0 --baseurl /skv`
 
 ## E2E expectations
 

@@ -3,29 +3,54 @@ layout: default
 title: SKV - Skill Vendor
 ---
 
-# SKV
-
-Repo-local, deterministic dependency management for agent skills.
-
-[GitHub](https://github.com/skill-vendor/skv) | [Schema](https://github.com/skill-vendor/skv/blob/main/docs/skv.schema.cue)
-
----
+<div class="hero">
+  <div class="hero-copy">
+    <p class="eyebrow">SKV</p>
+    <h1>Repo-local, deterministic dependency management for agent skills.</h1>
+    <p class="lede">Vendor skills directly into your repository, pin them by commit, and link them for the tools your team uses. Clone the repo and skills are ready - no registry, no global cache.</p>
+    <div class="hero-actions">
+      <a class="button" href="https://github.com/skill-vendor/skv">GitHub</a>
+      <a class="button ghost" href="https://github.com/skill-vendor/skv/blob/main/docs/skv.schema.cue">Schema</a>
+    </div>
+    <div class="hero-meta">
+      <span class="meta-label">Supported</span>
+      <span>Claude Code, OpenAI Codex, OpenCode, Cursor</span>
+    </div>
+  </div>
+  <div class="hero-panel">
+    <div class="panel-title">Quick start</div>
+    <pre><code>brew install skill-vendor/tap/skv
+skv init
+skv add https://github.com/acme/skill-foo
+skv sync</code></pre>
+    <div class="panel-note">Commit <code>skv.cue</code>, <code>skv.lock</code>, and <code>.skv/</code>.</div>
+  </div>
+</div>
 
 ## What is SKV?
 
-SKV vendors agent skills into your repository, pins them with a lock file, and creates symlinks for each supported tool. Clone the repo and skills are ready—no registry, no global cache.
+SKV vendors agent skills into your repository, pins them with a lock file, and creates symlinks for each supported tool. Clone the repo and skills are ready - no registry, no global cache.
 
-**Key features:**
-- CUE-based spec with JSON lock file
-- Deterministic installs (pinned commits + checksums)
-- Vendored dependencies committed to the repo
-- Works with any Git host (GitHub, GitLab, Codeberg, etc.)
-
-**Supported tools:**
-- Claude Code (`.claude/skills/`)
-- OpenAI Codex (`.codex/skills/`)
-- OpenCode (`.opencode/skill/`)
-- Cursor (via Codex/Claude-compatible handling)
+<div class="grid two-col">
+  <div class="card">
+    <h3>Key features</h3>
+    <ul>
+      <li>CUE-based spec with JSON lock file</li>
+      <li>Deterministic installs (pinned commits + checksums)</li>
+      <li>Vendored dependencies committed to the repo</li>
+      <li>Works with any Git host (GitHub, GitLab, Codeberg, etc.)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Supported tools</h3>
+    <ul>
+      <li>Claude Code (<code>.claude/skills/</code>)</li>
+      <li>OpenAI Codex (<code>.codex/skills/</code>)</li>
+      <li>OpenCode (<code>.opencode/skill/</code>)</li>
+      <li>Cursor (via Codex/Claude-compatible handling)</li>
+    </ul>
+  </div>
+</div>
 
 ---
 

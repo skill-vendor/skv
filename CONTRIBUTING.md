@@ -21,6 +21,19 @@ To run only the end-to-end suite:
 go test ./internal/e2e -run TestE2E
 ```
 
+## Validating docs (GitHub Pages)
+
+The docs site lives in `docs/` and is built by GitHub Pages. Use the GitHub Pages Docker image to preview without managing Ruby locally.
+
+```bash
+docker run --rm -p 4000:4000 -v "$PWD":/usr/src/app starefossen/github-pages \
+  jekyll serve -s docs --livereload --host 0.0.0.0 --baseurl /skv
+```
+
+Open `http://localhost:4000/skv` (the site uses `baseurl: /skv`).
+
+If you prefer to serve at the root, replace `--baseurl /skv` with `--baseurl ""` and open `http://localhost:4000/`.
+
 ## Building
 
 Build the CLI from the repo root:
