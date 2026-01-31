@@ -1,20 +1,39 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/skill-vendor/skv/internal/dirhash"
 	"github.com/skill-vendor/skv/internal/fsutil"
 	"github.com/skill-vendor/skv/internal/lock"
 	"github.com/skill-vendor/skv/internal/spec"
 )
+
+const (
+	maxCheckoutBytes = 50 * 1024 * 1024
+	maxSkillBytes    = 20 * 1024 * 1024
+	maxSkillFiles    = 5000
+	maxFileBytes     = 5 * 1024 * 1024
+
+	gitTimeout  = 2 * time.Minute
+	hashTimeout = 30 * time.Second
+)
+
+type syncOptions struct {
+	refresh     bool
+	acceptLocal bool
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -36,6 +55,18 @@ func main() {
 		if err := runSync(os.Args[2:]); err != nil {
 			fatal(err)
 		}
+	case "update":
+		if err := runUpdate(os.Args[2:]); err != nil {
+			fatal(err)
+		}
+	case "verify":
+		if err := runVerify(os.Args[2:]); err != nil {
+			fatal(err)
+		}
+	case "import":
+		if err := runImport(os.Args[2:]); err != nil {
+			fatal(err)
+		}
 	default:
 		usage()
 		os.Exit(2)
@@ -43,7 +74,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: skv <init|add|sync>")
+	fmt.Fprintln(os.Stderr, "usage: skv <init|add|sync|update|verify|import>")
 }
 
 func fatal(err error) {
@@ -81,6 +112,11 @@ func runAdd(args []string) error {
 	if repo == "" {
 		return fmt.Errorf("invalid repo argument")
 	}
+	var err error
+	path, err = cleanSubpath(path)
+	if err != nil {
+		return err
+	}
 
 	name := *nameFlag
 	if name == "" {
@@ -91,22 +127,46 @@ func runAdd(args []string) error {
 		}
 	}
 
+	specData, err := spec.Load("skv.cue")
+	if err != nil {
+		return err
+	}
+	for _, skill := range specData.Skills {
+		if skill.Name == name {
+			return fmt.Errorf("skill %q already exists", name)
+		}
+	}
+
+	if path == "" {
+		if err := ensureRepoHasSkill(repo, ref); err != nil {
+			return err
+		}
+	}
+
 	entry := spec.SkillEntry{
 		Name: name,
 		Repo: repo,
 		Path: path,
 		Ref:  ref,
 	}
-	return spec.AppendSkill("skv.cue", entry)
+
+	specData.Skills = append(specData.Skills, entry)
+	return spec.Write("skv.cue", specData)
 }
 
 func runSync(args []string) error {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
-	_ = fs.Bool("offline", false, "offline mode (not implemented)")
-	_ = fs.Bool("refresh", false, "refresh mode (not implemented)")
-	_ = fs.Bool("accept-local", false, "accept local mode (not implemented)")
+	offline := fs.Bool("offline", false, "offline mode")
+	refresh := fs.Bool("refresh", false, "refresh mode")
+	acceptLocal := fs.Bool("accept-local", false, "accept local mode")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *offline && (*refresh || *acceptLocal) {
+		return fmt.Errorf("offline mode is incompatible with --refresh or --accept-local")
+	}
+	if *refresh && *acceptLocal {
+		return fmt.Errorf("--refresh and --accept-local are mutually exclusive")
 	}
 
 	specData, err := spec.Load("skv.cue")
@@ -123,31 +183,46 @@ func runSync(args []string) error {
 		return err
 	}
 
-	excluded := make(map[string]struct{})
-	if specData.Tools != nil {
-		for _, tool := range specData.Tools.Exclude {
-			excluded[strings.ToLower(tool)] = struct{}{}
+	excluded := buildExcluded(specData)
+
+	if *offline {
+		lockData, err := lock.Load("skv.lock")
+		if err != nil {
+			return err
 		}
+		return verifyOffline(specData, lockData, repoRoot, excluded)
 	}
 
+	lockData, lockMap, err := loadLockOptional("skv.lock")
+	if err != nil {
+		return err
+	}
+
+	_ = lockData
+	seen := make(map[string]struct{})
 	var lockSkills []lock.Skill
+	opts := syncOptions{refresh: *refresh, acceptLocal: *acceptLocal}
+
 	for _, skill := range specData.Skills {
 		if skill.Name == "" {
 			return fmt.Errorf("skill missing name")
 		}
-		if skill.Local != "" {
-			return fmt.Errorf("local skills not supported yet")
+		if _, dup := seen[skill.Name]; dup {
+			return fmt.Errorf("duplicate skill name %q", skill.Name)
 		}
-		if skill.Repo == "" {
-			return fmt.Errorf("skill %q missing repo", skill.Name)
-		}
+		seen[skill.Name] = struct{}{}
 
-		entry, err := syncSkill(repoRoot, skill)
+		var entry lock.Skill
+		if skill.Local != "" {
+			entry, err = syncLocalSkill(repoRoot, skill, opts, lockMap)
+		} else {
+			entry, err = syncRemoteSkill(repoRoot, skill, opts, lockMap)
+		}
 		if err != nil {
 			return err
 		}
-		lockSkills = append(lockSkills, entry)
 
+		lockSkills = append(lockSkills, entry)
 		if err := linkSkill(repoRoot, skill.Name, excluded); err != nil {
 			return err
 		}
@@ -157,21 +232,568 @@ func runSync(args []string) error {
 	return lock.Write("skv.lock", &lock.Lock{Skills: lockSkills})
 }
 
-func syncSkill(repoRoot string, skill spec.SkillEntry) (lock.Skill, error) {
-	cloneDir, err := os.MkdirTemp("", "skv-clone-*")
+func runUpdate(args []string) error {
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	allFlag := fs.Bool("all", false, "update all non-commit refs")
+	refFlag := fs.String("ref", "", "temporary ref for this update")
+	forceFlag := fs.Bool("force", false, "allow tag ref to move")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	name := ""
+	if fs.NArg() > 0 {
+		name = fs.Arg(0)
+	}
+	if fs.NArg() > 1 {
+		return fmt.Errorf("update accepts at most one skill name")
+	}
+	if *refFlag != "" && name == "" {
+		return fmt.Errorf("--ref requires a skill name")
+	}
+	if *refFlag != "" && *allFlag {
+		return fmt.Errorf("--ref cannot be used with --all")
+	}
+	if name == "" && !*allFlag {
+		*allFlag = true
+	}
+	if name != "" && *allFlag {
+		return fmt.Errorf("cannot combine a skill name with --all")
+	}
+
+	specData, err := spec.Load("skv.cue")
+	if err != nil {
+		return err
+	}
+
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if err := fsutil.EnsureDir(filepath.Join(".skv", "skills")); err != nil {
+		return err
+	}
+
+	excluded := buildExcluded(specData)
+
+	lockData, lockMap, err := loadLockRequired("skv.lock")
+	if err != nil {
+		return err
+	}
+
+	var targets []spec.SkillEntry
+	if name != "" {
+		skill, ok := findSkill(specData, name)
+		if !ok {
+			return fmt.Errorf("skill %q not found in spec", name)
+		}
+		if skill.Local != "" {
+			return fmt.Errorf("cannot update local skill %q", name)
+		}
+		if isCommitRef(skill.Ref) && *refFlag == "" {
+			return fmt.Errorf("skill %q is pinned to a commit", name)
+		}
+		if *refFlag != "" {
+			skill.Ref = *refFlag
+		}
+		targets = append(targets, skill)
+	} else {
+		for _, skill := range specData.Skills {
+			if skill.Local != "" {
+				continue
+			}
+			if isCommitRef(skill.Ref) {
+				continue
+			}
+			targets = append(targets, skill)
+		}
+	}
+
+	if len(targets) == 0 {
+		return nil
+	}
+
+	for _, skill := range targets {
+		entry, err := updateRemoteSkill(repoRoot, skill, lockMap, *forceFlag)
+		if err != nil {
+			return err
+		}
+		lockMap[skill.Name] = entry
+		if err := linkSkill(repoRoot, skill.Name, excluded); err != nil {
+			return err
+		}
+	}
+
+	var lockSkills []lock.Skill
+	for _, skill := range specData.Skills {
+		entry, ok := lockMap[skill.Name]
+		if !ok {
+			continue
+		}
+		lockSkills = append(lockSkills, entry)
+	}
+	if len(lockSkills) == 0 {
+		return fmt.Errorf("no lock entries found after update")
+	}
+
+	sort.Slice(lockSkills, func(i, j int) bool { return lockSkills[i].Name < lockSkills[j].Name })
+	lockData.Skills = lockSkills
+	return lock.Write("skv.lock", lockData)
+}
+
+func runVerify(args []string) error {
+	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("verify does not accept arguments")
+	}
+
+	lockData, err := lock.Load("skv.lock")
+	if err != nil {
+		return err
+	}
+
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	return verifyLock(lockData, repoRoot)
+}
+
+func runImport(args []string) error {
+	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("import requires <agentDir>/<skill>")
+	}
+
+	inputPath := fs.Arg(0)
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	absPath, err := resolveLocalPath(repoRoot, inputPath)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("import path is not a directory: %s", absPath)
+	}
+
+	name := filepath.Base(absPath)
+	vendorPath := filepath.Join(repoRoot, ".skv", "skills", name)
+
+	if err := fsutil.EnsureDir(filepath.Dir(vendorPath)); err != nil {
+		return err
+	}
+	if _, err := os.Stat(vendorPath); err == nil {
+		return fmt.Errorf("vendored skill already exists: %s", vendorPath)
+	}
+
+	if err := os.Rename(absPath, vendorPath); err != nil {
+		return err
+	}
+
+	if err := ensureSkill(vendorPath); err != nil {
+		return err
+	}
+	if err := validateSkillDir(vendorPath); err != nil {
+		return err
+	}
+
+	checksum, err := hashDirWithTimeout(vendorPath)
+	if err != nil {
+		return err
+	}
+
+	localPath := filepath.ToSlash(filepath.Join(".", ".skv", "skills", name))
+	entry := spec.SkillEntry{
+		Name:  name,
+		Local: localPath,
+	}
+
+	specData, err := spec.Load("skv.cue")
+	if err != nil {
+		return err
+	}
+	for _, skill := range specData.Skills {
+		if skill.Name == name {
+			return fmt.Errorf("skill %q already exists in spec", name)
+		}
+	}
+	specData.Skills = append(specData.Skills, entry)
+	if err := spec.Write("skv.cue", specData); err != nil {
+		return err
+	}
+
+	lockData, lockMap, err := loadLockOptional("skv.lock")
+	if err != nil {
+		return err
+	}
+
+	license := detectLicense(vendorPath, repoRoot)
+	lockMap[name] = lock.Skill{
+		Name:     name,
+		Local:    localPath,
+		Checksum: checksum,
+		License:  license,
+	}
+
+	var lockSkills []lock.Skill
+	for _, skill := range specData.Skills {
+		if entry, ok := lockMap[skill.Name]; ok {
+			lockSkills = append(lockSkills, entry)
+		}
+	}
+	sort.Slice(lockSkills, func(i, j int) bool { return lockSkills[i].Name < lockSkills[j].Name })
+	lockData.Skills = lockSkills
+	if err := lock.Write("skv.lock", lockData); err != nil {
+		return err
+	}
+
+	excluded := buildExcluded(specData)
+	return linkSkill(repoRoot, name, excluded)
+}
+
+func loadLockOptional(path string) (*lock.Lock, map[string]lock.Skill, error) {
+	lockData, err := lock.Load(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return &lock.Lock{Skills: []lock.Skill{}}, map[string]lock.Skill{}, nil
+		}
+		return nil, nil, err
+	}
+	return lockData, indexLock(lockData), nil
+}
+
+func loadLockRequired(path string) (*lock.Lock, map[string]lock.Skill, error) {
+	lockData, err := lock.Load(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return lockData, indexLock(lockData), nil
+}
+
+func indexLock(lockData *lock.Lock) map[string]lock.Skill {
+	index := make(map[string]lock.Skill, len(lockData.Skills))
+	for _, skill := range lockData.Skills {
+		index[skill.Name] = skill
+	}
+	return index
+}
+
+func buildExcluded(specData *spec.Spec) map[string]struct{} {
+	excluded := make(map[string]struct{})
+	if specData.Tools != nil {
+		for _, tool := range specData.Tools.Exclude {
+			excluded[strings.ToLower(tool)] = struct{}{}
+		}
+	}
+	return excluded
+}
+
+func verifyOffline(specData *spec.Spec, lockData *lock.Lock, repoRoot string, excluded map[string]struct{}) error {
+	lockMap := indexLock(lockData)
+	seen := make(map[string]struct{})
+	for _, skill := range specData.Skills {
+		if skill.Name == "" {
+			return fmt.Errorf("skill missing name")
+		}
+		if _, dup := seen[skill.Name]; dup {
+			return fmt.Errorf("duplicate skill name %q", skill.Name)
+		}
+		seen[skill.Name] = struct{}{}
+
+		entry, ok := lockMap[skill.Name]
+		if !ok {
+			return fmt.Errorf("offline mode requires existing lock entry for %q", skill.Name)
+		}
+		if skill.Local != "" {
+			if entry.Local == "" || entry.Local != skill.Local {
+				return fmt.Errorf("offline mode requires lock entry for local skill %q to match spec", skill.Name)
+			}
+		} else {
+			if entry.Repo != skill.Repo || entry.Path != skill.Path || entry.Ref != skill.Ref {
+				return fmt.Errorf("offline mode requires lock entry for %q to match spec", skill.Name)
+			}
+		}
+		if err := verifySkill(entry, repoRoot); err != nil {
+			return err
+		}
+		if err := linkSkill(repoRoot, skill.Name, excluded); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifyLock(lockData *lock.Lock, repoRoot string) error {
+	seen := make(map[string]struct{})
+	for _, skill := range lockData.Skills {
+		if skill.Name == "" {
+			return fmt.Errorf("lock entry missing name")
+		}
+		if _, dup := seen[skill.Name]; dup {
+			return fmt.Errorf("duplicate lock entry %q", skill.Name)
+		}
+		seen[skill.Name] = struct{}{}
+
+		if err := verifySkill(skill, repoRoot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifySkill(entry lock.Skill, repoRoot string) error {
+	vendorPath := filepath.Join(repoRoot, ".skv", "skills", entry.Name)
+	if err := ensureSkill(vendorPath); err != nil {
+		return err
+	}
+	if err := validateSkillDir(vendorPath); err != nil {
+		return err
+	}
+	checksum, err := hashDirWithTimeout(vendorPath)
+	if err != nil {
+		return err
+	}
+	if checksum != entry.Checksum {
+		return fmt.Errorf("vendored content mismatch for %q (expected %s, got %s)", entry.Name, entry.Checksum, checksum)
+	}
+	return nil
+}
+
+func syncLocalSkill(repoRoot string, skill spec.SkillEntry, opts syncOptions, lockMap map[string]lock.Skill) (lock.Skill, error) {
+	if skill.Local == "" {
+		return lock.Skill{}, fmt.Errorf("local skill %q missing local path", skill.Name)
+	}
+	if skill.Repo != "" {
+		return lock.Skill{}, fmt.Errorf("local skill %q should not include repo", skill.Name)
+	}
+
+	srcPath, err := resolveLocalPath(repoRoot, skill.Local)
+	if err != nil {
+		return lock.Skill{}, err
+	}
+	vendorPath := filepath.Join(repoRoot, ".skv", "skills", skill.Name)
+
+	if opts.acceptLocal {
+		if _, err := os.Stat(vendorPath); err != nil {
+			return lock.Skill{}, fmt.Errorf("accept-local requires existing vendor for %q", skill.Name)
+		}
+		if err := ensureSkill(vendorPath); err != nil {
+			return lock.Skill{}, err
+		}
+		if err := validateSkillDir(vendorPath); err != nil {
+			return lock.Skill{}, err
+		}
+		checksum, err := hashDirWithTimeout(vendorPath)
+		if err != nil {
+			return lock.Skill{}, err
+		}
+		license := detectLicense(vendorPath, repoRoot)
+		return lock.Skill{
+			Name:     skill.Name,
+			Local:    skill.Local,
+			Checksum: checksum,
+			License:  license,
+		}, nil
+	}
+
+	if err := ensureSkill(srcPath); err != nil {
+		return lock.Skill{}, err
+	}
+	if err := validateSkillDir(srcPath); err != nil {
+		return lock.Skill{}, err
+	}
+
+	same, err := samePath(srcPath, vendorPath)
+	if err != nil {
+		return lock.Skill{}, err
+	}
+	if !same {
+		if err := copyDirAtomic(srcPath, vendorPath); err != nil {
+			return lock.Skill{}, err
+		}
+	}
+
+	if err := validateSkillDir(vendorPath); err != nil {
+		return lock.Skill{}, err
+	}
+	checksum, err := hashDirWithTimeout(vendorPath)
+	if err != nil {
+		return lock.Skill{}, err
+	}
+	license := detectLicense(vendorPath, repoRoot)
+	return lock.Skill{
+		Name:     skill.Name,
+		Local:    skill.Local,
+		Checksum: checksum,
+		License:  license,
+	}, nil
+}
+
+func syncRemoteSkill(repoRoot string, skill spec.SkillEntry, opts syncOptions, lockMap map[string]lock.Skill) (lock.Skill, error) {
+	if skill.Repo == "" {
+		return lock.Skill{}, fmt.Errorf("skill %q missing repo", skill.Name)
+	}
+	if skill.Local != "" {
+		return lock.Skill{}, fmt.Errorf("skill %q cannot set both repo and local", skill.Name)
+	}
+	cleanPath, err := cleanSubpath(skill.Path)
+	if err != nil {
+		return lock.Skill{}, err
+	}
+	skill.Path = cleanPath
+
+	vendorPath := filepath.Join(repoRoot, ".skv", "skills", skill.Name)
+	existing, hasLock := lockMap[skill.Name]
+
+	if opts.acceptLocal {
+		if !hasLock {
+			return lock.Skill{}, fmt.Errorf("accept-local requires existing lock entry for %q", skill.Name)
+		}
+		if !lockMatchesSpec(existing, skill) {
+			return lock.Skill{}, fmt.Errorf("accept-local requires lock entry for %q to match spec", skill.Name)
+		}
+		if _, err := os.Stat(vendorPath); err != nil {
+			return lock.Skill{}, fmt.Errorf("accept-local requires existing vendor for %q", skill.Name)
+		}
+		if err := ensureSkill(vendorPath); err != nil {
+			return lock.Skill{}, err
+		}
+		if err := validateSkillDir(vendorPath); err != nil {
+			return lock.Skill{}, err
+		}
+		checksum, err := hashDirWithTimeout(vendorPath)
+		if err != nil {
+			return lock.Skill{}, err
+		}
+		license := detectLicense(vendorPath, vendorPath)
+		if license == nil {
+			license = existing.License
+		}
+		return lock.Skill{
+			Name:     skill.Name,
+			Repo:     skill.Repo,
+			Path:     skill.Path,
+			Ref:      skill.Ref,
+			Commit:   existing.Commit,
+			Checksum: checksum,
+			License:  license,
+		}, nil
+	}
+
+	if !opts.refresh && hasLock && lockMatchesSpec(existing, skill) {
+		if err := ensureSkill(vendorPath); err != nil {
+			return lock.Skill{}, fmt.Errorf("vendored content for %q is missing; use --refresh or --accept-local", skill.Name)
+		}
+		if err := validateSkillDir(vendorPath); err != nil {
+			return lock.Skill{}, err
+		}
+		checksum, err := hashDirWithTimeout(vendorPath)
+		if err != nil {
+			return lock.Skill{}, err
+		}
+		if checksum == existing.Checksum {
+			return existing, nil
+		}
+		return lock.Skill{}, fmt.Errorf("vendored content for %q differs from lock; use --refresh or --accept-local", skill.Name)
+	}
+
+	return fetchAndVendorRemote(repoRoot, skill, vendorPath)
+}
+
+func updateRemoteSkill(repoRoot string, skill spec.SkillEntry, lockMap map[string]lock.Skill, force bool) (lock.Skill, error) {
+	cleanPath, err := cleanSubpath(skill.Path)
+	if err != nil {
+		return lock.Skill{}, err
+	}
+	skill.Path = cleanPath
+
+	existing, hasLock := lockMap[skill.Name]
+	cloneDir, err := cloneRepo(skill.Repo, skill.Ref, skill.Path)
 	if err != nil {
 		return lock.Skill{}, err
 	}
 	defer os.RemoveAll(cloneDir)
 
-	if err := gitClone(skill.Repo, cloneDir); err != nil {
+	if err := validateCheckoutSize(cloneDir); err != nil {
 		return lock.Skill{}, err
 	}
+
+	commit, err := gitHead(cloneDir)
+	if err != nil {
+		return lock.Skill{}, err
+	}
+
 	if skill.Ref != "" {
-		if err := gitCheckout(cloneDir, skill.Ref); err != nil {
+		isTag, err := gitIsTag(cloneDir, skill.Ref)
+		if err != nil {
 			return lock.Skill{}, err
 		}
+		if isTag && hasLock && existing.Commit != "" && existing.Commit != commit && !force {
+			return lock.Skill{}, fmt.Errorf("tag %q moved for %q; re-run with --force to accept", skill.Ref, skill.Name)
+		}
 	}
+
+	srcPath := cloneDir
+	if skill.Path != "" {
+		srcPath = filepath.Join(cloneDir, skill.Path)
+	}
+	if err := ensureSkill(srcPath); err != nil {
+		return lock.Skill{}, err
+	}
+	if err := validateSkillDir(srcPath); err != nil {
+		return lock.Skill{}, err
+	}
+
+	vendorPath := filepath.Join(repoRoot, ".skv", "skills", skill.Name)
+	if err := copyDirAtomic(srcPath, vendorPath); err != nil {
+		return lock.Skill{}, err
+	}
+	if err := validateSkillDir(vendorPath); err != nil {
+		return lock.Skill{}, err
+	}
+
+	checksum, err := hashDirWithTimeout(vendorPath)
+	if err != nil {
+		return lock.Skill{}, err
+	}
+
+	license := detectLicense(srcPath, cloneDir)
+	return lock.Skill{
+		Name:     skill.Name,
+		Repo:     skill.Repo,
+		Path:     skill.Path,
+		Ref:      skill.Ref,
+		Commit:   commit,
+		Checksum: checksum,
+		License:  license,
+	}, nil
+}
+
+func fetchAndVendorRemote(repoRoot string, skill spec.SkillEntry, vendorPath string) (lock.Skill, error) {
+	cloneDir, err := cloneRepo(skill.Repo, skill.Ref, skill.Path)
+	if err != nil {
+		return lock.Skill{}, err
+	}
+	defer os.RemoveAll(cloneDir)
+
+	if err := validateCheckoutSize(cloneDir); err != nil {
+		return lock.Skill{}, err
+	}
+
 	commit, err := gitHead(cloneDir)
 	if err != nil {
 		return lock.Skill{}, err
@@ -184,23 +806,24 @@ func syncSkill(repoRoot string, skill spec.SkillEntry) (lock.Skill, error) {
 	if err := ensureSkill(srcPath); err != nil {
 		return lock.Skill{}, err
 	}
-
-	vendorPath := filepath.Join(repoRoot, ".skv", "skills", skill.Name)
-	if err := os.RemoveAll(vendorPath); err != nil {
-		return lock.Skill{}, err
-	}
-	if err := fsutil.CopyDir(srcPath, vendorPath); err != nil {
+	if err := validateSkillDir(srcPath); err != nil {
 		return lock.Skill{}, err
 	}
 
-	checksum, err := dirhash.HashDir(vendorPath)
+	if err := copyDirAtomic(srcPath, vendorPath); err != nil {
+		return lock.Skill{}, err
+	}
+	if err := validateSkillDir(vendorPath); err != nil {
+		return lock.Skill{}, err
+	}
+
+	checksum, err := hashDirWithTimeout(vendorPath)
 	if err != nil {
 		return lock.Skill{}, err
 	}
 
 	license := detectLicense(srcPath, cloneDir)
-
-	entry := lock.Skill{
+	return lock.Skill{
 		Name:     skill.Name,
 		Repo:     skill.Repo,
 		Path:     skill.Path,
@@ -208,8 +831,27 @@ func syncSkill(repoRoot string, skill spec.SkillEntry) (lock.Skill, error) {
 		Commit:   commit,
 		Checksum: checksum,
 		License:  license,
+	}, nil
+}
+
+func ensureRepoHasSkill(repo, ref string) error {
+	cloneDir, err := cloneRepo(repo, ref, "")
+	if err != nil {
+		return err
 	}
-	return entry, nil
+	defer os.RemoveAll(cloneDir)
+
+	if err := validateCheckoutSize(cloneDir); err != nil {
+		return err
+	}
+
+	if err := ensureSkill(cloneDir); err != nil {
+		if strings.Contains(err.Error(), "missing SKILL.md") {
+			return fmt.Errorf("repo root missing SKILL.md; specify a :path")
+		}
+		return err
+	}
+	return nil
 }
 
 func ensureSkill(path string) error {
@@ -229,6 +871,97 @@ func ensureSkill(path string) error {
 	return nil
 }
 
+func validateSkillDir(root string) error {
+	var total int64
+	var count int
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("symlinks are not allowed: %s", path)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		count++
+		if count > maxSkillFiles {
+			return fmt.Errorf("skill exceeds max file count (%d)", maxSkillFiles)
+		}
+		if info.Size() > maxFileBytes {
+			return fmt.Errorf("file %s exceeds max size (%d bytes)", path, maxFileBytes)
+		}
+		total += info.Size()
+		if total > maxSkillBytes {
+			return fmt.Errorf("skill exceeds max size (%d bytes)", maxSkillBytes)
+		}
+		isLFS, err := isLFSPointer(path)
+		if err != nil {
+			return err
+		}
+		if isLFS {
+			return fmt.Errorf("git lfs pointer detected: %s", path)
+		}
+		return nil
+	})
+}
+
+func validateCheckoutSize(root string) error {
+	var total int64
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		total += info.Size()
+		if total > maxCheckoutBytes {
+			return fmt.Errorf("checkout exceeds max size (%d bytes)", maxCheckoutBytes)
+		}
+		return nil
+	})
+}
+
+func isLFSPointer(path string) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+
+	buf := make([]byte, 200)
+	n, err := file.Read(buf)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	content := string(buf[:n])
+	return strings.HasPrefix(content, "version https://git-lfs.github.com/spec/v1"), nil
+}
+
+func hashDirWithTimeout(path string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), hashTimeout)
+	defer cancel()
+	return dirhash.HashDirWithContext(ctx, path)
+}
+
 func detectLicense(skillDir, repoDir string) *lock.License {
 	candidates := []string{"LICENSE", "LICENSE.txt", "COPYING", "NOTICE"}
 	path := findFirstFile(skillDir, candidates)
@@ -236,6 +969,18 @@ func detectLicense(skillDir, repoDir string) *lock.License {
 		path = findFirstFile(repoDir, candidates)
 	}
 	if path == "" {
+		for _, name := range candidates {
+			content, ok, err := gitShowFile(repoDir, name)
+			if err != nil {
+				return nil
+			}
+			if ok {
+				return &lock.License{
+					SPDX: detectSPDXText(content),
+					Path: dirhash.NormalizePath(name),
+				}
+			}
+		}
 		return nil
 	}
 	spdx := detectSPDX(path)
@@ -264,8 +1009,18 @@ func detectSPDX(path string) string {
 	if err != nil {
 		return ""
 	}
-	if strings.Contains(string(data), "MIT License") {
+	return detectSPDXText(string(data))
+}
+
+func detectSPDXText(text string) string {
+	if strings.Contains(text, "MIT License") {
 		return "MIT"
+	}
+	if strings.Contains(text, "Apache License") {
+		return "Apache-2.0"
+	}
+	if strings.Contains(text, "BSD 3-Clause") {
+		return "BSD-3-Clause"
 	}
 	return ""
 }
@@ -290,9 +1045,20 @@ func linkSkill(repoRoot, name string, excluded map[string]struct{}) error {
 }
 
 func ensureLink(target, linkPath string) error {
-	if err := os.RemoveAll(linkPath); err != nil {
+	if info, err := os.Lstat(linkPath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || info.Mode().IsRegular() {
+			if err := os.Remove(linkPath); err != nil {
+				return err
+			}
+		} else if info.IsDir() {
+			return fmt.Errorf("refusing to replace directory %s", linkPath)
+		} else if err := os.Remove(linkPath); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+
 	if err := fsutil.EnsureDir(filepath.Dir(linkPath)); err != nil {
 		return err
 	}
@@ -304,33 +1070,132 @@ func ensureLink(target, linkPath string) error {
 	return os.Symlink(rel, linkPath)
 }
 
-func gitClone(repo, dir string) error {
-	cmd := exec.Command("git", "clone", repo, dir)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git clone failed: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
 func gitCheckout(dir, ref string) error {
-	cmd := exec.Command("git", "-C", dir, "checkout", ref)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git checkout failed: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return runGitCommand(dir, "checkout", ref)
 }
 
 func gitHead(dir string) (string, error) {
-	cmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
-	out, err := cmd.CombinedOutput()
+	out, err := runGitCommandOutput(dir, "rev-parse", "HEAD")
 	if err != nil {
-		return "", fmt.Errorf("git rev-parse failed: %w: %s", err, strings.TrimSpace(string(out)))
+		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func gitIsTag(dir, ref string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "-q", "--verify", "refs/tags/"+ref)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return false, fmt.Errorf("git rev-parse timed out")
+	}
+	if err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			return false, nil
+		}
+		return false, fmt.Errorf("git rev-parse failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return true, nil
+}
+
+func runGitCommand(dir string, args ...string) error {
+	_, err := runGitCommandOutput(dir, args...)
+	return err
+}
+
+func runGitCommandOutput(dir string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+
+	cmdArgs := append([]string{}, args...)
+	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("git %s timed out", strings.Join(args, " "))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+}
+
+func cloneRepo(repo, ref, sparsePath string) (string, error) {
+	cloneDir, err := os.MkdirTemp("", "skv-clone-*")
+	if err != nil {
+		return "", err
+	}
+
+	if err := runGitCommand("", "clone", "--no-checkout", repo, cloneDir); err != nil {
+		_ = os.RemoveAll(cloneDir)
+		return "", err
+	}
+	if sparsePath != "" {
+		if err := gitSparseCheckout(cloneDir, sparsePath); err != nil {
+			_ = os.RemoveAll(cloneDir)
+			return "", err
+		}
+	}
+
+	checkoutRef := ref
+	if checkoutRef == "" {
+		defaultBranch, err := gitDefaultBranch(cloneDir)
+		if err == nil && defaultBranch != "" {
+			checkoutRef = defaultBranch
+		} else {
+			checkoutRef = "HEAD"
+		}
+	}
+	if err := gitCheckout(cloneDir, checkoutRef); err != nil {
+		_ = os.RemoveAll(cloneDir)
+		return "", err
+	}
+	return cloneDir, nil
+}
+
+func gitDefaultBranch(dir string) (string, error) {
+	out, err := runGitCommandOutput(dir, "symbolic-ref", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return "", err
+	}
+	ref := strings.TrimSpace(string(out))
+	ref = strings.TrimPrefix(ref, "refs/remotes/origin/")
+	return ref, nil
+}
+
+func gitSparseCheckout(dir, path string) error {
+	clean := filepath.ToSlash(path)
+	if err := runGitCommand(dir, "sparse-checkout", "init", "--cone"); err != nil {
+		return err
+	}
+	return runGitCommand(dir, "sparse-checkout", "set", clean)
+}
+
+func gitShowFile(dir, path string) (string, bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "show", "HEAD:"+path)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", false, fmt.Errorf("git show timed out")
+	}
+	if err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("git show failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return string(out), true, nil
 }
 
 func parseRepoArg(arg string) (repo, ref, path string) {
@@ -381,4 +1246,107 @@ func deriveName(repo string) string {
 		trimmed = trimmed[idx+1:]
 	}
 	return strings.TrimSuffix(trimmed, ".git")
+}
+
+func cleanSubpath(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(path) {
+		return "", fmt.Errorf("path must be relative: %s", path)
+	}
+	cleaned := filepath.Clean(path)
+	if cleaned == "." {
+		return "", nil
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path escapes repo: %s", path)
+	}
+	return cleaned, nil
+}
+
+func resolveLocalPath(repoRoot, local string) (string, error) {
+	if local == "" {
+		return "", fmt.Errorf("local path is required")
+	}
+	abs := local
+	if !filepath.IsAbs(local) {
+		abs = filepath.Join(repoRoot, local)
+	}
+	abs = filepath.Clean(abs)
+	rel, err := filepath.Rel(repoRoot, abs)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("local path escapes repo: %s", local)
+	}
+	return abs, nil
+}
+
+func lockMatchesSpec(entry lock.Skill, skill spec.SkillEntry) bool {
+	return entry.Repo == skill.Repo && entry.Path == skill.Path && entry.Ref == skill.Ref && entry.Local == skill.Local
+}
+
+func samePath(a, b string) (bool, error) {
+	absA, err := filepath.Abs(a)
+	if err != nil {
+		return false, err
+	}
+	absB, err := filepath.Abs(b)
+	if err != nil {
+		return false, err
+	}
+	return absA == absB, nil
+}
+
+func copyDirAtomic(src, dst string) error {
+	parent := filepath.Dir(dst)
+	tmp, err := os.MkdirTemp(parent, ".skv-tmp-")
+	if err != nil {
+		return err
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
+
+	if err := fsutil.CopyDir(src, tmp); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dst); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+func isCommitRef(ref string) bool {
+	if len(ref) != 40 {
+		return false
+	}
+	for _, r := range ref {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		case r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func findSkill(specData *spec.Spec, name string) (spec.SkillEntry, bool) {
+	for _, skill := range specData.Skills {
+		if skill.Name == name {
+			return skill, true
+		}
+	}
+	return spec.SkillEntry{}, false
 }

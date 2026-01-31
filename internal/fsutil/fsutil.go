@@ -1,6 +1,7 @@
 package fsutil
 
 import (
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -16,6 +17,9 @@ func CopyDir(src, dst string) error {
 		if err != nil {
 			return err
 		}
+		if d.IsDir() && d.Name() == ".git" {
+			return fs.SkipDir
+		}
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
@@ -27,6 +31,9 @@ func CopyDir(src, dst string) error {
 		info, err := d.Info()
 		if err != nil {
 			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to copy symlink: %s", path)
 		}
 		if !info.Mode().IsRegular() {
 			return nil

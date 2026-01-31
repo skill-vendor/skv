@@ -11,10 +11,11 @@ type Lock struct {
 
 type Skill struct {
 	Name     string   `json:"name"`
-	Repo     string   `json:"repo"`
+	Local    string   `json:"local,omitempty"`
+	Repo     string   `json:"repo,omitempty"`
 	Path     string   `json:"path,omitempty"`
 	Ref      string   `json:"ref,omitempty"`
-	Commit   string   `json:"commit"`
+	Commit   string   `json:"commit,omitempty"`
 	Checksum string   `json:"checksum"`
 	License  *License `json:"license,omitempty"`
 }
@@ -31,4 +32,16 @@ func Write(path string, lock *Lock) error {
 	}
 	data = append(data, '\n')
 	return os.WriteFile(path, data, 0o644)
+}
+
+func Load(path string) (*Lock, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var lock Lock
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return nil, err
+	}
+	return &lock, nil
 }

@@ -46,7 +46,7 @@ exec sh -c 'test ! -e workspace/.opencode/skill/skill-alpha'
 exec sh -c 'test ! -e workspace/.opencode/skill/skill-bravo'
 
 # Build expected lock file with deterministic checksums.
-exec sh -c 'set -e; hashdir() { dir="$1"; ( cd "$dir" && find . -type f | sed "s|^./||" | LC_ALL=C sort | while IFS= read -r f; do [ -z "$f" ] && continue; h=$(shasum -a 256 "$f" | awk "{print \$1}"); printf "%s  %s\n" "$h" "$f"; done | shasum -a 256 | awk "{print \$1}" ); }; repo_url="file://$PWD/workspace/skillrepo"; commit=$(git -C workspace/skillrepo rev-parse HEAD); checksum_alpha=$(hashdir workspace/.skv/skills/skill-alpha); checksum_bravo=$(hashdir workspace/.skv/skills/skill-bravo); sed -e "s|__REPO__|$repo_url|g" -e "s|__COMMIT__|$commit|g" -e "s|__CHECKSUM_ALPHA__|$checksum_alpha|g" -e "s|__CHECKSUM_BRAVO__|$checksum_bravo|g" expected.lock.tmpl > workspace/expected.lock'
+exec sh -c 'set -e; hashdir() { dir="$1"; ( cd "$dir" && find . -type f | sed "s|^./||" | LC_ALL=C sort | while IFS= read -r f; do [ -z "$f" ] && continue; h=$(shasum -a 256 "$f" | awk "{print \$1}"); if stat -c "%a" "$f" >/dev/null 2>&1; then mode=$(stat -c "%a" "$f"); else mode=$(stat -f "%Lp" "$f"); fi; printf "%s  %s  %s\n" "$h" "$mode" "$f"; done | shasum -a 256 | awk "{print \$1}" ); }; repo_url="file://$PWD/workspace/skillrepo"; commit=$(git -C workspace/skillrepo rev-parse HEAD); checksum_alpha=$(hashdir workspace/.skv/skills/skill-alpha); checksum_bravo=$(hashdir workspace/.skv/skills/skill-bravo); sed -e "s|__REPO__|$repo_url|g" -e "s|__COMMIT__|$commit|g" -e "s|__CHECKSUM_ALPHA__|$checksum_alpha|g" -e "s|__CHECKSUM_BRAVO__|$checksum_bravo|g" expected.lock.tmpl > workspace/expected.lock'
 
 cmp workspace/skv.lock workspace/expected.lock
 

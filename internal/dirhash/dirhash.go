@@ -1,6 +1,7 @@
 package dirhash
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io/fs"
@@ -13,10 +14,22 @@ import (
 // HashDir computes a deterministic hash based on the hashes of files in the directory.
 // It ignores .git directories and only considers regular files.
 func HashDir(root string) (string, error) {
-	var files []string
+	return HashDirWithContext(context.Background(), root)
+}
+
+// HashDirWithContext is like HashDir but allows cancellation.
+func HashDirWithContext(ctx context.Context, root string) (string, error) {
+	type entry struct {
+		path string
+		mode fs.FileMode
+	}
+	var files []entry
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if d.IsDir() {
@@ -37,22 +50,25 @@ func HashDir(root string) (string, error) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		files = append(files, rel)
+		files = append(files, entry{path: rel, mode: info.Mode().Perm()})
 		return nil
 	})
 	if err != nil {
 		return "", err
 	}
 
-	sort.Strings(files)
+	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 	h := sha256.New()
-	for _, rel := range files {
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	for _, entry := range files {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(entry.path)))
 		if err != nil {
 			return "", err
 		}
 		fh := sha256.Sum256(data)
-		line := fmt.Sprintf("%x  %s\n", fh, rel)
+		line := fmt.Sprintf("%x  %o  %s\n", fh, entry.mode, entry.path)
 		h.Write([]byte(line))
 	}
 

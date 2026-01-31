@@ -17,7 +17,7 @@ exec sh -c 'test "$(readlink workspace/.claude/skills/local-skill)" = "../../.sk
 exec sh -c 'test "$(readlink workspace/.opencode/skill/local-skill)" = "../../.skv/skills/local-skill"'
 
 # Expected lock file.
-exec sh -c 'set -e; hashdir() { dir="$1"; ( cd "$dir" && find . -type f | sed "s|^./||" | LC_ALL=C sort | while IFS= read -r f; do [ -z "$f" ] && continue; h=$(shasum -a 256 "$f" | awk "{print \$1}"); printf "%s  %s\n" "$h" "$f"; done | shasum -a 256 | awk "{print \$1}" ); }; checksum=$(hashdir workspace/.skv/skills/local-skill); sed -e "s|__LOCAL__|./local-skill|g" -e "s|__CHECKSUM__|$checksum|g" expected.lock.tmpl > workspace/expected.lock'
+exec sh -c 'set -e; hashdir() { dir="$1"; ( cd "$dir" && find . -type f | sed "s|^./||" | LC_ALL=C sort | while IFS= read -r f; do [ -z "$f" ] && continue; h=$(shasum -a 256 "$f" | awk "{print \$1}"); if stat -c "%a" "$f" >/dev/null 2>&1; then mode=$(stat -c "%a" "$f"); else mode=$(stat -f "%Lp" "$f"); fi; printf "%s  %s  %s\n" "$h" "$mode" "$f"; done | shasum -a 256 | awk "{print \$1}" ); }; checksum=$(hashdir workspace/.skv/skills/local-skill); sed -e "s|__LOCAL__|./local-skill|g" -e "s|__CHECKSUM__|$checksum|g" expected.lock.tmpl > workspace/expected.lock'
 
 cmp workspace/skv.lock workspace/expected.lock
 

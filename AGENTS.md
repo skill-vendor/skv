@@ -11,11 +11,7 @@
 
 - Tests live in `internal/e2e/testdata/*.txt` and execute the compiled `skv` binary.
 - Each test defines an explicit `expected.lock.tmpl` and compares `skv.lock` byte-for-byte after substituting runtime values.
-- Several tests are currently expected to fail until the production binary implements:
-  - `skv verify`
-  - `skv update`
-  - `local` skills in `skv.cue`
-  - `skv sync --offline` behavior
+- The suite covers `verify`, `update`, local skills, and offline sync behavior; failures should be treated as regressions.
 
 ## When changing the spec
 
