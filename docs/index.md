@@ -8,6 +8,11 @@ title: SKV - Skill Vendor
     <p class="eyebrow">SKV</p>
     <h1>Repo-local, deterministic dependency management for agent skills.</h1>
     <p class="lede">Vendor skills directly into your repository, pin them by commit, and link them for the tools your team uses. Clone the repo and skills are ready - no registry, no global cache.</p>
+    <div class="hero-tags">
+      <span class="tag">Repo-local</span>
+      <span class="tag">Deterministic</span>
+      <span class="tag">No registry</span>
+    </div>
     <div class="hero-actions">
       <a class="button" href="https://github.com/skill-vendor/skv">GitHub</a>
       <a class="button ghost" href="https://github.com/skill-vendor/skv/blob/main/docs/skv.schema.cue">Schema</a>
@@ -27,9 +32,24 @@ skv sync</code></pre>
   </div>
 </div>
 
+<div class="hero-strip">
+  <div class="strip-item">
+    <span class="strip-label">Install</span>
+    <code>brew install skill-vendor/tap/skv</code>
+  </div>
+  <div class="strip-item">
+    <span class="strip-label">CI-friendly</span>
+    <span>Deterministic lock + offline verify</span>
+  </div>
+  <div class="strip-item">
+    <span class="strip-label">Works anywhere</span>
+    <span>GitHub, GitLab, Codeberg, self-hosted</span>
+  </div>
+</div>
+
 ## What is SKV?
 
-SKV vendors agent skills into your repository, pins them with a lock file, and creates symlinks for each supported tool. Clone the repo and skills are ready - no registry, no global cache.
+<p class="section-lede">SKV vendors agent skills into your repository, pins them with a lock file, and creates symlinks for each supported tool. Clone the repo and skills are ready - no registry, no global cache.</p>
 
 <div class="grid two-col">
   <div class="card">
@@ -54,10 +74,36 @@ SKV vendors agent skills into your repository, pins them with a lock file, and c
 
 ---
 
+## Workflow
+
+<p class="section-lede">Go from spec to vendored skills and tool links in one repeatable flow.</p>
+
+<div class="flow">
+  <div class="flow-step">
+    <span class="flow-index">1</span>
+    <h3>Spec</h3>
+    <p>Declare skills in <code>skv.cue</code> with repo, ref, and path.</p>
+  </div>
+  <div class="flow-step">
+    <span class="flow-index">2</span>
+    <h3>Vendor</h3>
+    <p><code>skv sync</code> fetches and pins exact commits into <code>.skv/skills/</code>.</p>
+  </div>
+  <div class="flow-step">
+    <span class="flow-index">3</span>
+    <h3>Link</h3>
+    <p>SKV wires symlinks into each tool’s skill directory automatically.</p>
+  </div>
+</div>
+
+---
+
 ## Quick Start
 
-```bash
-# 1. Install
+<div class="split">
+  <div class="panel">
+    <div class="panel-title">CLI</div>
+    <pre><code># 1. Install
 brew install skill-vendor/tap/skv
 
 # 2. Initialize
@@ -67,12 +113,22 @@ skv init
 skv add https://github.com/acme/skill-foo
 
 # 4. Sync (vendor + link)
-skv sync
+skv sync</code></pre>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Minimal skv.cue</div>
+    <pre><code class="language-cue">skv: {
+  skills: [
+    {
+      name: "skill-foo"
+      repo: "https://github.com/acme/skill-foo"
+    },
+  ]
+}</code></pre>
+  </div>
+</div>
 
-# 5. Commit everything
-git add skv.cue skv.lock .skv .claude .codex .opencode
-git commit -m "Add skill-foo"
-```
+<p class="section-lede">Commit <code>skv.cue</code>, <code>skv.lock</code>, and the <code>.skv/</code> directory once you’re happy with the result.</p>
 
 ---
 

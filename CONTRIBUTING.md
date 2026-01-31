@@ -27,12 +27,15 @@ The docs site lives in `docs/` and is built by GitHub Pages. Use the GitHub Page
 
 ```bash
 docker run --rm -p 4000:4000 -v "$PWD":/usr/src/app starefossen/github-pages \
-  jekyll serve -s docs --livereload --host 0.0.0.0 --baseurl /skv
+  jekyll serve -s docs --livereload --host 0.0.0.0 --baseurl ""
 ```
 
-Open `http://localhost:4000/skv` (the site uses `baseurl: /skv`).
+Open `http://localhost:4000/`.
 
-If you prefer to serve at the root, replace `--baseurl /skv` with `--baseurl ""` and open `http://localhost:4000/`.
+## Design principles
+
+- Keep the experience simple; eliminate anything that doesn't help the user ship.
+- DevEx is the priority. The CLI is the product surface area, and the docs should reflect that.
 
 ## Building
 

@@ -11,7 +11,12 @@ go build -o skv ./cmd/skv
 - Run the full test suite:
   - `go test ./...`
 - Make sure the tests pass before committing.
-- Validate docs changes: `docker run --rm -p 4000:4000 -v "$PWD":/usr/src/app starefossen/github-pages jekyll serve -s docs --livereload --host 0.0.0.0 --baseurl /skv`
+- Validate docs changes: `docker run --rm -p 4000:4000 -v "$PWD":/usr/src/app starefossen/github-pages jekyll serve -s docs --livereload --host 0.0.0.0 --baseurl ""`
+
+## Design principles
+
+- Keep it simple; avoid unnecessary layers or abstractions.
+- DevEx comes first. The CLI is the primary UI, the docs should reinforce that.
 
 ## E2E expectations
 
