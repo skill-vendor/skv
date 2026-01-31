@@ -4,6 +4,23 @@ Repo-local, deterministic dependency management for agent skills, built in Go.
 
 SKV vendors skills into your repo, pins them with a lock file, and exposes them via per-skill symlinks into agent directories. The result: clone the repo and skills are ready, without a registry or centralized cache.
 
+## Installation
+
+**Using Go:**
+
+```bash
+go install github.com/skill-vendor/skv/cmd/skv@latest
+```
+
+**From GitHub Releases:**
+
+Download the latest binary for your platform from [GitHub Releases](https://github.com/skill-vendor/skv/releases/latest), then:
+
+```bash
+chmod +x skv-*
+sudo mv skv-* /usr/local/bin/skv
+```
+
 ## Why
 
 Skills are becoming a shared standard across tools (Claude Code, Codex CLI, OpenCode), but there is no good ecosystem for dependency management. SKV brings a Go-modules-like workflow to skills:
