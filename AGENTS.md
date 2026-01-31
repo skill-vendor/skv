@@ -22,3 +22,8 @@ go build -o skv ./cmd/skv
 
 - Update the `expected.lock.tmpl` blocks to match the new lock format.
 - Keep lock templates readable; only substitute dynamic values (repo, commit, checksum).
+
+## Homebrew formula
+
+- Located at `skill-vendor/homebrew-tap` repo in `Formula/skv.rb`
+- Distributes pre-built binaries for macOS/Linux (ARM/Intel)
