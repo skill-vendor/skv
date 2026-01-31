@@ -1,0 +1,30 @@
+# Offline mode should fail if a fetch is required.
+
+env GIT_AUTHOR_NAME=TestUser
+env GIT_AUTHOR_EMAIL=test@example.com
+env GIT_COMMITTER_NAME=TestUser
+env GIT_COMMITTER_EMAIL=test@example.com
+env GIT_AUTHOR_DATE=2000-01-01T00:00:00Z
+env GIT_COMMITTER_DATE=2000-01-01T00:00:00Z
+
+exec mkdir workspace
+exec sh -c 'cd workspace && skv init'
+
+exec mkdir -p workspace/skillrepo/skill-foo
+exec git -C workspace/skillrepo -c init.defaultBranch=main init
+exec sh -c 'printf "%s\n" "---" "name: skill-foo" "description: demo skill" "---" > workspace/skillrepo/skill-foo/SKILL.md'
+exec git -C workspace/skillrepo add .
+exec git -C workspace/skillrepo commit -m add-skill
+
+exec sh -c 'cd workspace && skv add file://$PWD/skillrepo:skill-foo'
+
+# Expected: offline mode errors because the skill has not been vendored yet.
+! exec sh -c 'cd workspace && skv sync --offline'
+
+# Lock should remain at the initialized empty state.
+cmp workspace/skv.lock expected.lock.tmpl
+
+-- expected.lock.tmpl --
+{
+  "skills": []
+}

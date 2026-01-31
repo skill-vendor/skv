@@ -1,0 +1,80 @@
+# Full spec with multiple skills and tool exclusion.
+
+env GIT_AUTHOR_NAME=TestUser
+env GIT_AUTHOR_EMAIL=test@example.com
+env GIT_COMMITTER_NAME=TestUser
+env GIT_COMMITTER_EMAIL=test@example.com
+env GIT_AUTHOR_DATE=2000-01-01T00:00:00Z
+env GIT_COMMITTER_DATE=2000-01-01T00:00:00Z
+
+exec mkdir workspace
+exec sh -c 'cd workspace && skv init'
+
+exec mkdir -p workspace/skillrepo/skills/alpha
+exec mkdir -p workspace/skillrepo/skills/bravo
+exec mkdir -p workspace/skillrepo/skills/alpha/docs
+exec mkdir -p workspace/skillrepo/skills/alpha/subdir
+exec git -C workspace/skillrepo -c init.defaultBranch=main init
+exec sh -c 'printf "%s\n" "---" "name: skill-alpha" "description: alpha skill" "---" > workspace/skillrepo/skills/alpha/SKILL.md'
+exec sh -c 'printf "%s\n" "---" "name: skill-bravo" "description: bravo skill" "---" > workspace/skillrepo/skills/bravo/SKILL.md'
+exec sh -c 'printf "%s\n" "alpha content" > workspace/skillrepo/skills/alpha/notes.txt'
+exec sh -c 'printf "%s\n" "alpha docs" > workspace/skillrepo/skills/alpha/docs/guide.md'
+exec sh -c 'printf "%s\n" "alpha subdir" > workspace/skillrepo/skills/alpha/subdir/more.txt'
+exec sh -c 'printf "%s\n" "bravo content" > workspace/skillrepo/skills/bravo/notes.txt'
+exec sh -c 'printf "%s\n" "MIT License" "" "Copyright (c) 2000 Example" > workspace/skillrepo/LICENSE'
+exec git -C workspace/skillrepo add .
+exec git -C workspace/skillrepo commit -m add-skills
+
+exec sh -c 'cd workspace && printf "skv: {\n  tools: {\n    exclude: [\\\"opencode\\\"]\n  }\n  skills: [\n    {\n      name: \\\"skill-alpha\\\"\n      repo: \\\"file://$PWD/skillrepo\\\"\n      path: \\\"skills/alpha\\\"\n      ref: \\\"main\\\"\n    },\n    {\n      name: \\\"skill-bravo\\\"\n      repo: \\\"file://$PWD/skillrepo\\\"\n      path: \\\"skills/bravo\\\"\n    },\n  ]\n}\n" > skv.cue'
+
+exec sh -c 'cd workspace && skv sync'
+
+# Assert vendored content exists.
+exists workspace/.skv/skills/skill-alpha/SKILL.md
+exists workspace/.skv/skills/skill-bravo/SKILL.md
+exists workspace/.skv/skills/skill-alpha/docs/guide.md
+exists workspace/.skv/skills/skill-alpha/subdir/more.txt
+
+# Assert symlinks for supported tools.
+exec sh -c 'test "$(readlink workspace/.codex/skills/skill-alpha)" = "../../.skv/skills/skill-alpha"'
+exec sh -c 'test "$(readlink workspace/.codex/skills/skill-bravo)" = "../../.skv/skills/skill-bravo"'
+exec sh -c 'test "$(readlink workspace/.claude/skills/skill-alpha)" = "../../.skv/skills/skill-alpha"'
+exec sh -c 'test "$(readlink workspace/.claude/skills/skill-bravo)" = "../../.skv/skills/skill-bravo"'
+
+# Assert opencode links are excluded.
+exec sh -c 'test ! -e workspace/.opencode/skill/skill-alpha'
+exec sh -c 'test ! -e workspace/.opencode/skill/skill-bravo'
+
+# Build expected lock file with deterministic checksums.
+exec sh -c 'set -e; hashdir() { dir="$1"; ( cd "$dir" && find . -type f | sed "s|^./||" | LC_ALL=C sort | while IFS= read -r f; do [ -z "$f" ] && continue; h=$(shasum -a 256 "$f" | awk "{print \$1}"); printf "%s  %s\n" "$h" "$f"; done | shasum -a 256 | awk "{print \$1}" ); }; repo_url="file://$PWD/workspace/skillrepo"; commit=$(git -C workspace/skillrepo rev-parse HEAD); checksum_alpha=$(hashdir workspace/.skv/skills/skill-alpha); checksum_bravo=$(hashdir workspace/.skv/skills/skill-bravo); sed -e "s|__REPO__|$repo_url|g" -e "s|__COMMIT__|$commit|g" -e "s|__CHECKSUM_ALPHA__|$checksum_alpha|g" -e "s|__CHECKSUM_BRAVO__|$checksum_bravo|g" expected.lock.tmpl > workspace/expected.lock'
+
+cmp workspace/skv.lock workspace/expected.lock
+
+-- expected.lock.tmpl --
+{
+  "skills": [
+    {
+      "name": "skill-alpha",
+      "repo": "__REPO__",
+      "path": "skills/alpha",
+      "ref": "main",
+      "commit": "__COMMIT__",
+      "checksum": "__CHECKSUM_ALPHA__",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
+      }
+    },
+    {
+      "name": "skill-bravo",
+      "repo": "__REPO__",
+      "path": "skills/bravo",
+      "commit": "__COMMIT__",
+      "checksum": "__CHECKSUM_BRAVO__",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE"
+      }
+    }
+  ]
+}
