@@ -26,8 +26,25 @@ go test ./internal/e2e -run TestE2E
 Build the CLI from the repo root:
 
 ```bash
-go build ./cmd/skv
+go build -o skv ./cmd/skv
+./skv version  # prints "dev"
 ```
+
+To build with a specific version:
+
+```bash
+go build -ldflags "-X main.version=v1.0.0" -o skv ./cmd/skv
+```
+
+## Releasing
+
+Releases are created via GitHub Actions:
+
+1. Go to **Actions** → **release** → **Run workflow**
+2. Enter version in semver format (e.g., `v1.0.0`)
+3. Click **Run workflow**
+
+The workflow validates the version format, runs tests, builds binaries for linux/darwin × amd64/arm64, and creates a GitHub release with the binaries.
 
 ## Updating expected locks
 

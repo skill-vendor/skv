@@ -1,5 +1,11 @@
 # AGENTS
 
+## Building
+
+```bash
+go build -o skv ./cmd/skv
+```
+
 ## Validation checklist
 
 - Run the full test suite:
