@@ -413,6 +413,14 @@ small {
     padding: 36px 20px 72px;
   }
 
+  .hero {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+    padding: 0;
+  }
+
   h1 {
     font-size: 2rem;
   }
