@@ -2,6 +2,19 @@
 
 Thanks for helping build SKV. This repo is test-first by design.
 
+## Local dev loop
+
+The fastest way to iterate:
+
+```bash
+# 1. Make your changes
+# 2. Run E2E tests (catches most regressions)
+go test ./internal/e2e -run TestE2E
+
+# 3. Run full suite before committing
+go test ./...
+```
+
 ## Testing philosophy
 
 - **End-to-end first.** The CLI is validated via real `go test` runs that execute the compiled `skv` binary and operate on temporary git repositories.
@@ -23,7 +36,13 @@ go test ./internal/e2e -run TestE2E
 
 ## Validating docs (GitHub Pages)
 
-The docs site lives in `docs/` and is built by GitHub Pages. Use the GitHub Pages Docker image to preview without managing Ruby locally.
+The docs site lives in `docs/` and is built by GitHub Pages:
+
+- `docs/index.md` — the homepage
+- `docs/skv.schema.cue` — the CUE schema reference
+- `docs/examples/skv.cue` — example spec file
+
+Use the GitHub Pages Docker image to preview without managing Ruby locally:
 
 ```bash
 docker run --rm -p 4000:4000 -v "$PWD":/usr/src/app starefossen/github-pages \
@@ -31,6 +50,16 @@ docker run --rm -p 4000:4000 -v "$PWD":/usr/src/app starefossen/github-pages \
 ```
 
 Open `http://localhost:4000/`.
+
+## Updating schema and examples
+
+If you change the spec format:
+
+1. Update `docs/skv.schema.cue` with the new schema
+2. Update `docs/examples/skv.cue` to match
+3. Update `expected.lock.tmpl` blocks in `internal/e2e/testdata/*.txt` if the lock format changed
+
+Keep schema, examples, and tests in sync.
 
 ## Design principles
 

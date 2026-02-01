@@ -7,7 +7,7 @@ title: SKV - Skill Vendor
   <div class="hero-copy">
     <p class="eyebrow">SKV</p>
     <h1>Repo-local, deterministic dependency management for agent skills.</h1>
-    <p class="lede">Vendor skills directly into your repository, pin them by commit, and link them for the tools your team uses. Clone the repo and skills are ready - no registry, no global cache.</p>
+    <p class="lede">Vendor skills directly into your repository, pin them by commit, and link them for the tools your team uses. Clone the repo and skills are ready to use—no registry, no global cache.</p>
     <div class="hero-tags">
       <span class="tag">Repo-local</span>
       <span class="tag">Deterministic</span>
@@ -19,7 +19,7 @@ title: SKV - Skill Vendor
     </div>
     <div class="hero-meta">
       <span class="meta-label">Supported</span>
-      <span>Claude Code, OpenAI Codex, OpenCode, Cursor</span>
+      <span>Claude Code, OpenAI Codex, OpenCode, <a href="https://cursor.com/docs/context/skills">Cursor</a></span>
     </div>
   </div>
   <div class="hero-panel">
@@ -47,27 +47,62 @@ skv sync</code></pre>
   </div>
 </div>
 
-## What is SKV?
+<nav class="toc">
+  <strong>On this page:</strong>
+  <a href="#why-skv">Why SKV</a> ·
+  <a href="#workflow">Workflow</a> ·
+  <a href="#commands">Commands</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#lock-file">Lock File</a> ·
+  <a href="#ci-integration">CI</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
+  <a href="#installation">Installation</a>
+</nav>
 
-<p class="section-lede">SKV vendors agent skills into your repository, pins them with a lock file, and creates symlinks for each supported tool. Clone the repo and skills are ready - no registry, no global cache.</p>
+---
+
+## Why SKV?
+
+Skills are becoming a shared standard across tools (Claude Code, Codex CLI, OpenCode), but there is no good ecosystem for dependency management. SKV brings a Go-modules-like workflow to skills:
 
 <div class="grid two-col">
   <div class="card">
-    <h3>Key features</h3>
+    <h3>The problem</h3>
     <ul>
-      <li>CUE-based spec with JSON lock file</li>
-      <li>Deterministic installs (pinned commits + checksums)</li>
-      <li>Vendored dependencies committed to the repo</li>
-      <li>Works with any Git host (GitHub, GitLab, Codeberg, etc.)</li>
+      <li>Skills scattered across repos with no versioning</li>
+      <li>No way to pin exact versions across a team</li>
+      <li>Manual copy-paste leads to drift</li>
+      <li>No CI verification that skills match expectations</li>
     </ul>
   </div>
   <div class="card">
-    <h3>Supported tools</h3>
+    <h3>SKV's approach</h3>
+    <ul>
+      <li>CUE-based spec with JSON lock file</li>
+      <li>Deterministic installs (pinned commits + checksums)</li>
+      <li>Vendored skills committed to the repo</li>
+      <li>Works with any Git host—no registry required</li>
+    </ul>
+  </div>
+</div>
+
+---
+
+## Supported Tools
+
+<div class="grid two-col">
+  <div class="card">
+    <h3>Native support</h3>
     <ul>
       <li>Claude Code (<code>.claude/skills/</code>)</li>
       <li>OpenAI Codex (<code>.codex/skills/</code>)</li>
       <li>OpenCode (<code>.opencode/skill/</code>)</li>
-      <li>Cursor (via Codex/Claude-compatible handling)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Compatible</h3>
+    <ul>
+      <li><a href="https://cursor.com/docs/context/skills">Cursor</a> (via Codex/Claude-compatible skills handling)</li>
     </ul>
   </div>
 </div>
@@ -92,43 +127,19 @@ skv sync</code></pre>
   <div class="flow-step">
     <span class="flow-index">3</span>
     <h3>Link</h3>
-    <p>SKV wires symlinks into each tool’s skill directory automatically.</p>
+    <p>SKV wires symlinks into each tool's skill directory automatically.</p>
+  </div>
+  <div class="flow-step">
+    <span class="flow-index">4</span>
+    <h3>Commit</h3>
+    <p>Commit <code>skv.cue</code>, <code>skv.lock</code>, and <code>.skv/</code> to your repo.</p>
+  </div>
+  <div class="flow-step">
+    <span class="flow-index">5</span>
+    <h3>Verify</h3>
+    <p>Run <code>skv verify</code> in CI to ensure skills match the lock.</p>
   </div>
 </div>
-
----
-
-## Quick Start
-
-<div class="split">
-  <div class="panel">
-    <div class="panel-title">CLI</div>
-    <pre><code># 1. Install
-brew install skill-vendor/tap/skv
-
-# 2. Initialize
-skv init
-
-# 3. Add a skill
-skv add https://github.com/acme/skill-foo
-
-# 4. Sync (vendor + link)
-skv sync</code></pre>
-  </div>
-  <div class="panel">
-    <div class="panel-title">Minimal skv.cue</div>
-    <pre><code class="language-cue">skv: {
-  skills: [
-    {
-      name: "skill-foo"
-      repo: "https://github.com/acme/skill-foo"
-    },
-  ]
-}</code></pre>
-  </div>
-</div>
-
-<p class="section-lede">Commit <code>skv.cue</code>, <code>skv.lock</code>, and the <code>.skv/</code> directory once you’re happy with the result.</p>
 
 ---
 
@@ -241,11 +252,31 @@ skv: {
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | Unique skill identifier |
-| `repo` | Remote | Git repository URL |
+| `name` | Always | Unique skill identifier |
+| `repo` | For remote skills | Git repository URL |
 | `path` | No | Subdirectory containing the skill |
 | `ref` | No | Tag, branch, or commit (defaults to repo default branch) |
-| `local` | Local | Path to local skill directory |
+| `local` | For local skills | Path to local skill directory (mutually exclusive with `repo`) |
+
+---
+
+## Lock File
+
+`skv.lock` is a machine-managed JSON file that ensures deterministic installs. It captures:
+
+- **Resolved commit SHA** — the exact commit vendored, even if the spec uses a branch or tag
+- **Checksum** — SHA-256 hash of the vendored directory contents
+- **License metadata** — best-effort SPDX identifier and license file path
+
+**Why checksums matter:**
+
+Checksums use SHA-256 over a deterministic directory hash (sorted file paths + file mode + file contents). This provides:
+
+- **Integrity** — detects local edits or tampering
+- **Reproducibility** — ensures vendored contents match what was resolved
+- **CI verification** — `skv verify` validates checksums and errors on mismatch
+
+Tags are expected to be stable. If a tag resolves to a different commit, `skv update` warns and aborts unless you re-run with `--force`.
 
 ---
 
@@ -274,7 +305,40 @@ jobs:
         run: skv verify
 ```
 
+For ARM64 runners, use `skv-linux-arm64` instead.
+
 If vendored content doesn't match the lock, `skv verify` exits non-zero with details about the mismatch.
+
+---
+
+## Troubleshooting
+
+**Missing SKILL.md**
+
+```
+error: skill directory must contain SKILL.md at its root
+```
+
+Every skill directory must have a `SKILL.md` file. If adding a single-skill repo, ensure `SKILL.md` is at the repo root. For monorepos, specify the path to the skill directory.
+
+**Lock mismatch**
+
+```
+error: vendored content does not match lock
+```
+
+The vendored files have changed since the lock was written. Options:
+
+- `skv sync --refresh` — re-fetch from remote and update the lock
+- `skv sync --accept-local` — accept local changes and rewrite the lock
+
+**Network unavailable**
+
+```
+error: fetch required but running in offline mode
+```
+
+`skv sync --offline` can only verify and link already-vendored skills. If a skill hasn't been fetched yet, you'll need network access.
 
 ---
 
