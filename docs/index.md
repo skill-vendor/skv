@@ -5,45 +5,16 @@ title: SKV - Skill Vendor
 
 <div class="hero">
   <div class="hero-copy">
-    <p class="eyebrow">SKV</p>
-    <h1>Repo-local, deterministic dependency management for agent skills.</h1>
-    <p class="lede">Vendor skills directly into your repository, pin them by commit, and link them for the tools your team uses. Clone the repo and skills are ready to use—no registry, no global cache.</p>
-    <div class="hero-tags">
-      <span class="tag">Repo-local</span>
-      <span class="tag">Deterministic</span>
-      <span class="tag">No registry</span>
-    </div>
-    <div class="hero-actions">
-      <a class="button" href="https://github.com/skill-vendor/skv">GitHub</a>
-      <a class="button ghost" href="https://github.com/skill-vendor/skv/blob/main/docs/skv.schema.cue">Schema</a>
-    </div>
-    <div class="hero-meta">
-      <span class="meta-label">Supported</span>
-      <span>Claude Code, OpenAI Codex, OpenCode, <a href="https://cursor.com/docs/context/skills">Cursor</a></span>
-    </div>
+    <h1>Deterministic, repo-local skill deps for your CLI workflow.</h1>
+    <p class="hero-tagline">Repo-local · Deterministic · No registry</p>
+    <p class="hero-links"><a href="https://github.com/skill-vendor/skv">GitHub</a> · <a href="https://github.com/skill-vendor/skv/blob/main/docs/skv.schema.cue">Schema</a></p>
   </div>
   <div class="hero-panel">
-    <div class="panel-title">Quick start</div>
     <pre><code>brew install skill-vendor/tap/skv
 skv init
 skv add https://github.com/acme/skill-foo
 skv sync</code></pre>
     <div class="panel-note">Commit <code>skv.cue</code>, <code>skv.lock</code>, and <code>.skv/</code>.</div>
-  </div>
-</div>
-
-<div class="hero-strip">
-  <div class="strip-item">
-    <span class="strip-label">Install</span>
-    <code>brew install skill-vendor/tap/skv</code>
-  </div>
-  <div class="strip-item">
-    <span class="strip-label">CI-friendly</span>
-    <span>Deterministic lock + offline verify</span>
-  </div>
-  <div class="strip-item">
-    <span class="strip-label">Works anywhere</span>
-    <span>GitHub, GitLab, Codeberg, self-hosted</span>
   </div>
 </div>
 
